@@ -10,63 +10,70 @@ class Agent:
         self.llm = ChatOpenAICompat(self.__get_tools_definition())
 
     def query(self, query:str):
+        # 询问模型
+        response = self.llm.chat(query)
         while True:
-            # 询问模型
-            choice = self.llm.chat(query)
-            message = choice.message
-            
-            reasoning = getattr(message, "reasoning", None)
-            if reasoning:
-                print("Thought:", reasoning)
+            function_calls = []
+            # 解析输出
+            for item in response.output:
+                output_type = item.type
+                if output_type == "reasoning":
+                    if item.summary:
+                        for s in item.summary:
+                            print("Thought:", s.text)
 
-            if message.content:
-                print("Answer:", message.content)
+                elif output_type == "message":
+                    for c in item.content:
+                        if c.type == "output_text":
+                            print("Answer:", c.text)
 
-            if choice.finish_reason == "stop":
+                elif output_type == "function_call":
+                    function_calls.append(item)
+
+            # 没有工具调用
+            if not function_calls:
                 return
-            
-            Observation = ''
-            if choice.finish_reason == "tool_calls":
-                tool_calls = message.tool_calls
-                if not tool_calls:
-                    return
 
-                # Action
-                for call in tool_calls:
-                    tool_name = call.function.name
-                    tool_args = json.loads(call.function.arguments)
+            # 执行工具调用
+            tool_outputs = []
 
-                    print(f"Acting: {tool_name} -> {call.function.arguments}")
+            for function in function_calls:
+                tool_name = function.name
+                tool_args = json.loads(function.arguments)
 
-                    #调用对应工具
-                    tool_obj = next((t for t in self.tools if t.name == tool_name), None)
-                    if tool_obj is None:
-                        tool_result = f"Tool {tool_name} not found"
-                    else:
-                        tool_result = tool_obj.execute(tool_args)
+                print(f"Acting: {tool_name} -> {function.arguments}")
 
-                    print(f"Observation: {tool_result}")
-                    Observation += tool_result
-                    # 把 Observation 写回消息历史
-                    self.llm.append_tool_result(
-                        tool_call_id=call.id,
-                        result=tool_result,
-                    )
+                #调用对应工具
+                tool_obj = next((t for t in self.tools if t.name == tool_name), None)
+                if tool_obj is None:
+                    tool_result = f"Tool {tool_name} not found"
+                else:
+                    tool_result = tool_obj.execute(tool_args)
 
+                print(f"Observation: {tool_result}")
+
+                tool_outputs.append({
+                    "type": "function_call_output",
+                    "call_id": function.call_id,
+                    "output": tool_result,
+                })
                 print("--------------------------------")
-                query = Observation
+
+            # 把工具执行结果接回上一轮，继续推理
+            response = self.llm.chat(
+                query=tool_outputs,
+                previous_response_id=response.id,
+            )
 
     # 模型的工具定义格式
     # https://developers.openai.com/api/docs/guides/function-calling
-    def __get_tools_definition(self)-> List[Dict[str, Any]]:
+    def __get_tools_definition(self) -> List[Dict[str, Any]]:
         return [
             {
-                "type" : "function",
-                "function" :{
-                    "name" : tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                },
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
             }
             for tool in self.tools
         ]

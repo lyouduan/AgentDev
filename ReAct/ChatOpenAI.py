@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from openai import OpenAI
 
 SYSTEM_PROMPT = """
@@ -28,34 +28,47 @@ class ChatOpenAICompat:
             }
         ]
 
-    def chat(self, query : str):
+        # Responses API 可以直接用 instructions + input
+        self.instructions = SYSTEM_PROMPT
+
+    def chat(self, query : str, previous_response_id: Optional[str] = None):
         # 保存聊天记录
-        self.messages.append(
-            {
-                "role" : "user",
-                "content" : query,
-            }
-        )
+        # self.messages.append(
+        #     {
+        #         "role" : "user",
+        #         "content" : query,
+        #     }
+        # )
 
         # 调用模型
-        response = self.client.chat.completions.create(
+        # 旧接口 >> https://developers.openai.com/api/reference/resources/chat
+        # response = self.client.chat.completions.create(
+        #     model=self.model,
+        #     messages=self.messages,
+        #     tools=self.tools,
+        #     tool_choice="auto",
+        # )
+
+
+        #  new API >> https://developers.openai.com/api/docs/guides/migrate-to-responses
+        response = self.client.responses.create(
             model=self.model,
-            messages=self.messages,
+            instructions=self.instructions,
+            input=query,
             tools=self.tools,
             tool_choice="auto",
+            previous_response_id=previous_response_id,
         )
 
-        message = response.choices[0].message
-        self.messages.append(message.model_dump())
 
-        return response.choices[0]
+        return response
     
     # Observation
-    def append_tool_result(self, tool_call_id:str, result:str):
-        self.messages.append(
-            {
-                "role" : "tool",
-                "tool_call_id" : tool_call_id,
-                "content" : result,
-            }
-        )   
+    # def append_tool_result(self, tool_call_id:str, result:str):
+    #     self.messages.append(
+    #         {
+    #             "role" : "tool",
+    #             "tool_call_id" : tool_call_id,
+    #             "content" : result,
+    #         }
+    #     )   
